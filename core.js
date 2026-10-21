@@ -229,40 +229,92 @@ function loader() {
 }
 
 // ─────────────────────────────────────────────
+// ANALYTICS
+// ─────────────────────────────────────────────
+
+function trackEvent(name, params = {}) {
+  if (typeof window.gtag !== "function") return;
+  window.gtag("event", name, params);
+}
+
+// Fires onShow each time el goes from hidden to visible
+function observeVisible(el, onShow) {
+  if (!el) return;
+  let shown = false;
+
+  new MutationObserver(() => {
+    const visible = getComputedStyle(el).display !== "none";
+    if (visible && !shown) onShow();
+    shown = visible;
+  }).observe(el, { attributes: true, attributeFilter: ["style", "class"] });
+}
+
+function initFormTracking() {
+  document.querySelectorAll("form[data-form-intent]").forEach((form) => {
+    const intent = form.dataset.formIntent;
+    const block = form.closest(".w-form");
+    if (!block) return;
+
+    let started = false;
+
+    const onStart = () => {
+      if (started) return;
+      started = true;
+      trackEvent("contact_form_start", { intent });
+    };
+    form.addEventListener("input", onStart);
+    form.addEventListener("change", onStart);
+
+    observeVisible(block.querySelector(".w-form-done"), () => {
+      started = false; // a second submission counts as a new start
+      trackEvent(intent === "hiring" ? "generate_lead" : "candidate_form_submit", { intent });
+    });
+
+    observeVisible(block.querySelector(".w-form-fail"), () => {
+      trackEvent("contact_form_error", { intent });
+    });
+  });
+}
+
+function initEmailTracking() {
+  document.addEventListener("click", (e) => {
+    const link = e.target.closest('a[href^="mailto:"]');
+    if (!link) return;
+    const where = link.closest(".footer_wrap") ? "footer" : link.closest("section[id]")?.id || "page";
+    trackEvent("email_click", { link_location: location });
+  });
+}
+
+function initTracking() {
+  initFormTracking();
+  initEmailTracking();
+}
+
+// ─────────────────────────────────────────────
 // AI PROMPT BUTTONS
 // ─────────────────────────────────────────────
 
 function promptButtons() {
-  const links = document.querySelectorAll(".footer_left_prompt_icon");
+  const links = document.querySelectorAll("[data-verify-ai][data-ai-prompt]");
   if (!links.length) return;
-
-  const PROMPT =
-    "What can you tell me about Stealthmode Recruiting (stealthmode.co), the recruiting firm for venture-backed startups?";
 
   const PROVIDERS = {
     claude: (q) => `https://claude.ai/new?q=${q}`,
     chatgpt: (q) => `https://chatgpt.com/?hints=search&q=${q}`,
   };
 
-  const fallbackOrder = ["claude", "chatgpt"];
-  const q = encodeURIComponent(PROMPT);
+  links.forEach((link) => {
+    const provider = link.dataset.verifyAi.trim();
+    const prompt = link.dataset.aiPrompt.trim();
+    const buildUrl = PROVIDERS[provider];
+    if (!buildUrl || !prompt) return;
 
-  links.forEach((link, i) => {
-    const key = link.dataset.aiPrompt || fallbackOrder[i];
-    const buildUrl = PROVIDERS[key];
-    if (!buildUrl) return;
-
-    link.href = buildUrl(q);
+    link.href = buildUrl(encodeURIComponent(prompt));
     link.target = "_blank";
     link.rel = "noopener noreferrer";
 
     link.addEventListener("click", () => {
-      if (typeof window.gtag === "function") {
-        window.gtag("event", "ask_ai_click", {
-          ai_provider: key,
-          link_location: "footer",
-        });
-      }
+      trackEvent("ask_ai_click", { ai_provider: provider });
     });
   });
 }
@@ -907,6 +959,7 @@ function contactTabs(root) {
     }
 
     if (focus) tabs[i].focus();
+    if (active !== -1) trackEvent("contact_intent_select", { intent: tabs[i].dataset.contactTab });
     active = i;
   }
 
@@ -996,9 +1049,7 @@ function contactDrawer() {
     const activeTab = wrap.querySelector('[role="tab"][aria-selected="true"]');
     (activeTab || closeBtn)?.focus({ preventScroll: true });
 
-    if (typeof window.gtag === "function") {
-      window.gtag("event", "contact_drawer_open", { link_location: source });
-    }
+    trackEvent("contact_drawer_open", { link_location: source });
   }
 
   function close() {
@@ -1047,6 +1098,7 @@ document.addEventListener("DOMContentLoaded", function () {
   navScroll(menuController);
 
   loader();
+  initTracking();
   promptButtons();
   eyebrowScramble();
   scrambleText();
